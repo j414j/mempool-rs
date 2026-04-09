@@ -23,7 +23,7 @@
 //! # Examples
 //!
 //! ```
-//! use mempool::mempool::MemPool;
+//! use mempool::basic::MemPool;
 //!
 //! let mut pool = MemPool::new(2);
 //! let mut a = pool.alloc().unwrap();

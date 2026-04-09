@@ -10,7 +10,7 @@
 //! # Examples
 //!
 //! ```
-//! use mempool::threadsafe_mempool::MemPool;
+//! use mempool::threadsafe::MemPool;
 //!
 //! let pool = MemPool::new(2);
 //! let mut a = pool.alloc().unwrap();

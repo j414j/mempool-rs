@@ -11,7 +11,7 @@
 //! # Examples
 //!
 //! ```
-//! use mempool::managed_mempool::MemPool;
+//! use mempool::managed::MemPool;
 //!
 //! let pool = MemPool::new(2);
 //! let mut a = pool.alloc().unwrap();
