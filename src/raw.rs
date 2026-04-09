@@ -94,7 +94,7 @@ impl<T> MemPool<T> {
     unsafe { (*slot.elem.get()).as_mut_ptr() }
   }
 
-  fn calculate_idx_from_ptr(&mut self, ptr: *mut T) -> usize {
+  fn calculate_idx_from_ptr(&self, ptr: *mut T) -> usize {
     unsafe { (*(ptr.byte_sub(core::mem::offset_of!(Slot<T>, elem)) as *const Slot<T>)).idx }
   }
 

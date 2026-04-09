@@ -6,3 +6,4 @@ pub mod basic;
 pub mod managed;
 pub mod raw;
 pub mod threadsafe;
+pub mod threadsafe_raw;
