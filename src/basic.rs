@@ -39,7 +39,8 @@
 //! assert!(pool.alloc().is_some());
 //! ```
 //!
-use std::{cell::UnsafeCell, mem::MaybeUninit};
+use alloc::vec::Vec;
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 struct Slot<T> {
   elem: UnsafeCell<MaybeUninit<T>>,
@@ -202,7 +203,7 @@ impl<T> Drop for SlotHandle<T> {
 #[cfg(test)]
 mod tests {
   use super::MemPool;
-  use std::sync::atomic::{AtomicUsize, Ordering};
+  use core::sync::atomic::{AtomicUsize, Ordering};
 
   struct DropCounter<'a> {
     drops: &'a AtomicUsize,
@@ -242,16 +243,13 @@ mod tests {
   }
 
   #[test]
+  #[should_panic]
   fn checked_free_rejects_foreign_handle() {
     let mut a = MemPool::<u32>::new(1);
     let mut b = MemPool::<u32>::new(1);
     let handle = a.alloc().unwrap();
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-      b.free(handle);
-    }));
-
-    assert!(result.is_err());
+    b.free(handle);
   }
 
   #[test]

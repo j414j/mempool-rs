@@ -26,7 +26,8 @@
 //! assert!(pool.alloc().is_some());
 //! ```
 //!
-use std::{
+use alloc::vec::Vec;
+use core::{
   cell::{Cell, UnsafeCell},
   mem::MaybeUninit,
 };
@@ -173,7 +174,7 @@ impl<'a, T> Drop for SlotHandle<'a, T> {
 #[cfg(test)]
 mod tests {
   use super::MemPool;
-  use std::sync::atomic::{AtomicUsize, Ordering};
+  use core::sync::atomic::{AtomicUsize, Ordering};
 
   struct DropCounter<'a> {
     drops: &'a AtomicUsize,

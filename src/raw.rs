@@ -38,7 +38,8 @@
 //! assert!(pool.alloc().is_some());
 //! ```
 //!
-use std::{cell::UnsafeCell, mem::MaybeUninit};
+use alloc::vec::Vec;
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 struct Slot<T> {
   idx: usize,
@@ -94,7 +95,7 @@ impl<T> MemPool<T> {
   }
 
   fn calculate_idx_from_ptr(&mut self, ptr: *mut T) -> usize {
-    unsafe { (*(ptr.byte_sub(std::mem::offset_of!(Slot<T>, elem)) as *const Slot<T>)).idx }
+    unsafe { (*(ptr.byte_sub(core::mem::offset_of!(Slot<T>, elem)) as *const Slot<T>)).idx }
   }
 
   /// Frees a pointer without validating that it belongs to this pool.
@@ -132,7 +133,7 @@ impl<T> MemPool<T> {
 #[cfg(test)]
 mod tests {
   use super::MemPool;
-  use std::sync::atomic::{AtomicUsize, Ordering};
+  use core::sync::atomic::{AtomicUsize, Ordering};
 
   #[derive(Debug, PartialEq, Eq)]
   struct Pair {
@@ -171,7 +172,7 @@ mod tests {
     unsafe {
       ptr.write(41);
       assert_eq!(*ptr, 41);
-      std::ptr::drop_in_place(ptr);
+      core::ptr::drop_in_place(ptr);
     }
     pool.free(ptr);
 
@@ -202,7 +203,7 @@ mod tests {
         }
       );
 
-      std::ptr::drop_in_place(ptr);
+      core::ptr::drop_in_place(ptr);
     }
     pool.free(ptr);
   }
@@ -230,16 +231,13 @@ mod tests {
   }
 
   #[test]
+  #[should_panic]
   fn free_panics_for_pointer_outside_pool() {
     let mut pool = MemPool::<u64>::new(1);
     let begin = pool.buf.as_ptr() as usize;
-    let outside = (begin + pool.buf.len() * std::mem::size_of::<super::Slot<u64>>()) as *mut u64;
+    let outside = (begin + pool.buf.len() * core::mem::size_of::<super::Slot<u64>>()) as *mut u64;
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-      pool.free(outside);
-    }));
-
-    assert!(result.is_err());
+    pool.free(outside);
   }
 
   #[test]
@@ -250,7 +248,7 @@ mod tests {
     unsafe {
       ptr.write(77);
       assert_eq!(*ptr, 77);
-      std::ptr::drop_in_place(ptr);
+      core::ptr::drop_in_place(ptr);
       pool.free_unchecked(ptr);
     }
 
@@ -270,7 +268,7 @@ mod tests {
     assert_eq!(drops.load(Ordering::SeqCst), 0);
 
     unsafe {
-      std::ptr::drop_in_place(ptr);
+      core::ptr::drop_in_place(ptr);
     }
     assert_eq!(drops.load(Ordering::SeqCst), 1);
 

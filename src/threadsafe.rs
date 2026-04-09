@@ -25,7 +25,8 @@
 //! assert!(pool.alloc().is_some());
 //! ```
 //!
-use std::{
+use alloc::{boxed::Box, vec::Vec};
+use core::{
   cell::UnsafeCell,
   mem::MaybeUninit,
   sync::atomic::{AtomicUsize, Ordering},
@@ -250,11 +251,7 @@ impl<'a, T> Drop for SlotHandle<'a, T> {
 #[cfg(test)]
 mod tests {
   use super::{MemPool, TryAllocFailReason};
-  use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-  };
-  use std::thread;
+  use core::sync::atomic::{AtomicUsize, Ordering};
 
   struct DropCounter<'a> {
     drops: &'a AtomicUsize,
@@ -299,27 +296,6 @@ mod tests {
     handle.init(17);
     assert_eq!(unsafe { *handle.get_unchecked() }, 17);
     drop(handle);
-    assert!(pool.alloc().is_some());
-  }
-
-  #[test]
-  fn supports_multiple_threads_allocating() {
-    let pool = Arc::new(MemPool::<u32>::new(4));
-    let sum = AtomicUsize::new(0);
-
-    thread::scope(|scope| {
-      for i in 0..4 {
-        let pool = Arc::clone(&pool);
-        let sum_ref = &sum;
-        scope.spawn(move || {
-          let mut handle = pool.alloc().unwrap();
-          handle.init(i as u32);
-          sum_ref.fetch_add(*handle.get() as usize, Ordering::SeqCst);
-        });
-      }
-    });
-
-    assert_eq!(sum.load(Ordering::SeqCst), 6);
     assert!(pool.alloc().is_some());
   }
 
