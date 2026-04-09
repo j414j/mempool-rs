@@ -6,7 +6,8 @@
 
 - `basic`: single-threaded pool with movable handles and explicit `free`
 - `managed`: single-threaded pool with lifetime-bound handles and RAII slot return
-- `raw`: single-threaded pool that returns raw `*mut T`
+- `raw`: single-threaded raw-pointer pool where the caller drops `T`
+- `raw_compact`: single-threaded raw-pointer pool with a more compact slot layout; the pool drops `T` on free
 - `threadsafe`: multithreaded pool with managed handles and atomic freelist bookkeeping
 - `threadsafe_raw`: multithreaded raw-pointer pool with a tagged atomic freelist head
 
@@ -24,9 +25,10 @@ The modules do not all offer the same safety guarantees:
 In particular, the raw variants are performance-oriented primitives. Callers are responsible for:
 
 - initializing values before reading them
-- dropping values before freeing or reusing a slot that still contains a live `T`
 - avoiding double-free and use-after-free
 - preventing aliasing and data races when sharing raw pointers
+
+For `raw`, callers also drop `T` manually before freeing. For `raw_compact`, the pool drops `T` when the slot is freed.
 
 ## Usage
 
@@ -59,6 +61,21 @@ unsafe {
     ptr.write(42);
     assert_eq!(*ptr, 42);
     core::ptr::drop_in_place(ptr);
+    pool.free(ptr);
+}
+```
+
+For the compact raw variant:
+
+```rust
+use mempool::raw_compact::MemPool;
+
+let mut pool = MemPool::new(1);
+let ptr: *mut i32 = pool.alloc().unwrap();
+
+unsafe {
+    ptr.write(42);
+    assert_eq!(*ptr, 42);
     pool.free(ptr);
 }
 ```
