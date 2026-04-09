@@ -8,3 +8,4 @@ pub mod raw;
 pub mod raw_compact;
 pub mod threadsafe;
 pub mod threadsafe_raw;
+pub mod threadsafe_raw_compact;
