@@ -1,31 +1,19 @@
-//! A fixed-capacity pool that returns movable slot handles.
+//! A fixed-capacity pool with lifetime-bound handles and RAII slot return.
 //!
-//! This is the loosest and most manual handle-based variant in the crate.
-//! `MemPool<T>` owns a fixed number of slots and returns [`SlotHandle`] values
-//! that may coexist and be moved around freely. Slots are returned to the pool
-//! only when [`MemPool::free`] or [`MemPool::free_unchecked`] is called.
+//! This variant ties each [`SlotHandle`] to the lifetime of the originating
+//! [`MemPool`]. That prevents handles from outliving the pool while still
+//! allowing multiple handles to exist concurrently by using interior mutability
+//! inside the pool.
 //!
-//! # Design Choice
-//!
-//! [`SlotHandle`] is not lifetime-bound to the pool. That makes multiple live
-//! handles easy to use, but it also means the compiler cannot prevent a handle
-//! from outliving the [`MemPool`] that created it.
-//!
-//! Callers must therefore uphold these rules:
-//! - a handle must not outlive its pool
-//! - a handle must be freed at most once
-//! - a handle must be freed back into the same pool
-//!
-//! Dropping a handle destroys the stored `T` if it was initialized, but it does
-//! not return the slot to the freelist. Returning the slot is an explicit pool
-//! operation.
+//! Slots are returned to the freelist automatically when their handles are
+//! dropped. There is no public `free` method in this module.
 //!
 //! # Examples
 //!
 //! ```
-//! use mempool::mempool::MemPool;
+//! use mempool::managed_mempool::MemPool;
 //!
-//! let mut pool = MemPool::new(2);
+//! let pool = MemPool::new(2);
 //! let mut a = pool.alloc().unwrap();
 //! let mut b = pool.alloc().unwrap();
 //!
@@ -34,21 +22,23 @@
 //! assert_eq!(*a.get(), 10);
 //! assert_eq!(*b.get(), 20);
 //!
-//! pool.free(a);
-//! pool.free(b);
+//! drop(a);
 //! assert!(pool.alloc().is_some());
 //! ```
 //!
-use std::{cell::UnsafeCell, mem::MaybeUninit};
+use std::{
+  cell::{Cell, UnsafeCell},
+  mem::MaybeUninit,
+};
 
 struct Slot<T> {
   elem: UnsafeCell<MaybeUninit<T>>,
-  next: usize,
+  next: Cell<usize>,
 }
 
 pub struct MemPool<T> {
   buf: Vec<Slot<T>>,
-  head: usize,
+  head: Cell<usize>,
 }
 
 impl<T> MemPool<T> {
@@ -58,11 +48,14 @@ impl<T> MemPool<T> {
     for i in 0..size {
       buf.push(Slot {
         elem: UnsafeCell::new(MaybeUninit::uninit()),
-        next: i + 1,
+        next: Cell::new(i + 1),
       })
     }
 
-    Self { buf, head: 0 }
+    Self {
+      buf,
+      head: Cell::new(0),
+    }
   }
 
   /// Allocates one slot from the pool.
@@ -71,11 +64,11 @@ impl<T> MemPool<T> {
   /// before using [`SlotHandle::get`] or [`SlotHandle::get_mut`].
   ///
   /// Returns `None` if the pool is exhausted.
-  pub fn alloc<'a>(&'a mut self) -> Option<SlotHandle<T>> {
-    if self.head >= self.buf.len() {
+  pub fn alloc<'a>(&'a self) -> Option<SlotHandle<'a, T>> {
+    let head = self.head.get();
+    if head >= self.buf.len() {
       return None;
     }
-
     Some(unsafe { self.alloc_unchecked() })
   }
 
@@ -85,58 +78,35 @@ impl<T> MemPool<T> {
   ///
   /// The caller must ensure that the pool still contains at least one free
   /// slot before calling this function.
-  pub unsafe fn alloc_unchecked<'a>(&'a mut self) -> SlotHandle<T> {
-    let idx = self.head;
+  pub unsafe fn alloc_unchecked<'a>(&'a self) -> SlotHandle<'a, T> {
+    let idx = self.head.get();
     let slot = &self.buf[idx];
-    self.head = slot.next;
+    self.head.set(slot.next.get());
 
     SlotHandle {
       idx,
       elem: slot.elem.get(),
       is_init: false,
+      pool: &self,
     }
   }
-
-  /// Frees a handle without validating that it belongs to this pool.
+  /// Returns a slot to the freelist.
   ///
-  /// # Safety
-  ///
-  /// The caller must ensure all of the following:
-  /// - `handle` was returned by a previous call to [`MemPool::alloc`] on this
-  ///   exact pool.
-  /// - `handle` has not already been freed.
-  /// - No references previously derived from the handle are used again after
-  ///   this call.
-  pub unsafe fn free_unchecked(&mut self, handle: SlotHandle<T>) {
-    self.buf[handle.idx].next = self.head;
-    self.head = handle.idx;
-  }
-
-  /// Frees a handle previously allocated from this pool.
-  ///
-  /// Panics if the handle does not belong to this pool.
-  pub fn free<'a>(&'a mut self, handle: SlotHandle<T>) {
-    if handle.idx >= self.buf.len() {
-      panic!("Illegal free");
-    }
-
-    if handle.elem != self.buf[handle.idx].elem.get() {
-      panic!("invalid handle");
-    }
-
-    unsafe {
-      self.free_unchecked(handle);
-    }
+  /// This is used internally from [`Drop`] for [`SlotHandle`].
+  fn free_unchecked(&self, slot_idx: usize) {
+    self.buf[slot_idx].next.set(self.head.get());
+    self.head.set(slot_idx);
   }
 }
 
-pub struct SlotHandle<T> {
+pub struct SlotHandle<'a, T> {
   idx: usize,
   elem: *mut MaybeUninit<T>,
   is_init: bool,
+  pool: &'a MemPool<T>,
 }
 
-impl<T> SlotHandle<T> {
+impl<'a, T> SlotHandle<'a, T> {
   /// Initializes the value stored in this slot.
   ///
   /// Panics if the slot has already been initialized.
@@ -189,13 +159,14 @@ impl<T> SlotHandle<T> {
   }
 }
 
-impl<T> Drop for SlotHandle<T> {
+impl<'a, T> Drop for SlotHandle<'a, T> {
   fn drop(&mut self) {
     if self.is_init {
       unsafe {
         (*self.elem).assume_init_drop();
       }
     }
+    self.pool.free_unchecked(self.idx);
   }
 }
 
@@ -216,48 +187,34 @@ mod tests {
 
   #[test]
   fn alloc_returns_none_when_exhausted() {
-    let mut pool = MemPool::<u32>::new(2);
-    assert!(pool.alloc().is_some());
-    assert!(pool.alloc().is_some());
+    let pool = MemPool::<u32>::new(2);
+    let _a = pool.alloc().unwrap();
+    let _b = pool.alloc().unwrap();
     assert!(pool.alloc().is_none());
   }
 
   #[test]
-  fn free_recycles_slots() {
-    let mut pool = MemPool::<u32>::new(1);
+  fn dropping_handle_returns_slot_to_pool() {
+    let pool = MemPool::<u32>::new(1);
     let handle = pool.alloc().unwrap();
-    pool.free(handle);
+    drop(handle);
     assert!(pool.alloc().is_some());
   }
 
   #[test]
   fn get_and_get_mut_work_after_init() {
-    let mut pool = MemPool::<u32>::new(1);
+    let pool = MemPool::<u32>::new(1);
     let mut handle = pool.alloc().unwrap();
-    handle.init(10);
-    assert_eq!(*handle.get(), 10);
-    *handle.get_mut() += 5;
-    assert_eq!(*handle.get(), 15);
-    pool.free(handle);
+    handle.init(3);
+    assert_eq!(*handle.get(), 3);
+    *handle.get_mut() *= 4;
+    assert_eq!(*handle.get(), 12);
   }
 
   #[test]
-  fn checked_free_rejects_foreign_handle() {
-    let mut a = MemPool::<u32>::new(1);
-    let mut b = MemPool::<u32>::new(1);
-    let handle = a.alloc().unwrap();
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-      b.free(handle);
-    }));
-
-    assert!(result.is_err());
-  }
-
-  #[test]
-  fn dropping_handle_drops_value_but_does_not_free_slot() {
+  fn dropping_handle_drops_inner_value() {
     let drops = AtomicUsize::new(0);
-    let mut pool = MemPool::<DropCounter<'_>>::new(1);
+    let pool = MemPool::<DropCounter<'_>>::new(1);
 
     {
       let mut handle = pool.alloc().unwrap();
@@ -265,6 +222,6 @@ mod tests {
     }
 
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert!(pool.alloc().is_none());
+    assert!(pool.alloc().is_some());
   }
 }

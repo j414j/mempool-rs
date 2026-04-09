@@ -1,3 +1,2 @@
-mod mempool;
-
-pub use mempool::{MemPool, SlotHandle};
+pub mod managed_mempool;
+pub mod mempool;
